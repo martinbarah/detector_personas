@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Permissions-Policy" content="camera=*">
+    <title>Detector de Personas - POC</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 95%;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 25px;
+            font-size: 14px;
+        }
+
+        .status {
+            background: #f0f0f0;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .status.loading {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status.ready {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto 20px;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        #video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 36px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .info {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .error-details {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            font-size: 12px;
+            line-height: 1.6;
+            font-family: monospace;
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            button {
+                padding: 12px 20px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎥 Detector de Personas</h1>
+        <div class="subtitle">Prueba de Concepto - Detección en Tiempo Real</div>
+
+        <div id="status" class="status loading">
+            Cargando modelo de inteligencia artificial...
+        </div>
+
+        <div class="controls">
+            <button id="startBtn" disabled>▶️ Iniciar Cámara</button>
+            <button id="stopBtn" disabled>⏹️ Detener</button>
+            <button id="switchBtn" disabled>🔄 Cambiar Cámara</button>
+        </div>
+
+        <div class="video-container">
+            <video id="video" autoplay playsinline muted></video>
+            <canvas id="canvas"></canvas>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="personCount">0</div>
+                <div class="stat-label">Personas Detectadas</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="fps">0</div>
+                <div class="stat-label">FPS</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="confidence">0%</div>
+                <div class="stat-label">Confianza Promedio</div>
+            </div>
+        </div>
+
+        <div class="info">
+            <strong>📋 Instrucciones:</strong><br>
+            1. Haz clic en "Iniciar Cámara" para comenzar<br>
+            2. Permite el acceso a la cámara cuando lo solicite<br>
+            3. El sistema detectará personas automáticamente<br>
+            4. Los cuadros verdes muestran las personas detectadas<br>
+            5. Usa "Cambiar Cámara" para alternar entre frontal/trasera
+        </div>
+
+        <div id="errorDetails" class="error-details"></div>
+    </div>
+
+    <!-- TensorFlow.js y COCO-SSD -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3"></script>
+
+    <script>
+        let video = document.getElementById('video');
+        let canvas = document.getElementById('canvas');
+        let ctx = canvas.getContext('2d');
+        let model = null;
+        let stream = null;
+        let isDetecting = false;
+        let currentCamera = 'environment'; // Empezar con cámara trasera
+        let detectionCount = 0;
+        let lastTime = Date.now();
+        let frameCount = 0;
+
+        const statusDiv = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const switchBtn = document.getElementById('switchBtn');
+        const personCountDiv = document.getElementById('personCount');
+        const fpsDiv = document.getElementById('fps');
+        const confidenceDiv = document.getElementById('confidence');
+        const errorDetailsDiv = document.getElementById('errorDetails');
+
+        // Función para mostrar errores detallados
+        function showError(message, details) {
+            console.error(message, details);
+            statusDiv.textContent = '❌ ' + message;
+            statusDiv.className = 'status error';
+            
+            errorDetailsDiv.style.display = 'block';
+            errorDetailsDiv.innerHTML = '<strong>Detalles técnicos:</strong><br>' + 
+                JSON.stringify(details, null, 2);
+        }
+
+        // Verificar soporte del navegador
+        function checkBrowserSupport() {
+            const errors = [];
+            
+            if (!navigator.mediaDevices) {
+                errors.push('navigator.mediaDevices no está disponible');
+            }
+            
+            if (!navigator.mediaDevices?.getUserMedia) {
+                errors.push('getUserMedia no está disponible');
+            }
+            
+            if (window.location.protocol !== 'https:' && 
+                window.location.hostname !== 'localhost' && 
+                window.location.hostname !== '127.0.0.1') {
+                errors.push('Se requiere HTTPS para acceder a la cámara (excepto localhost)');
+            }
+            
+            return errors;
+        }
+
+        // Cargar el modelo
+        async function loadModel() {
+            try {
+                // Verificar soporte del navegador
+                const supportErrors = checkBrowserSupport();
+                if (supportErrors.length > 0) {
+                    showError('Problemas de compatibilidad detectados', {
+                        errors: supportErrors,
+                        protocol: window.location.protocol,
+                        hostname: window.location.hostname,
+                        userAgent: navigator.userAgent
+                    });
+                    return;
+                }
+                
+                statusDiv.textContent = '⏳ Cargando modelo de IA...';
+                statusDiv.className = 'status loading';
+                
+                model = await cocoSsd.load();
+                
+                statusDiv.textContent = '✅ Modelo cargado. Presiona "Iniciar Cámara"';
+                statusDiv.className = 'status ready';
+                startBtn.disabled = false;
+                
+                console.log('Modelo COCO-SSD cargado correctamente');
+            } catch (error) {
+                showError('Error cargando el modelo', {
+                    error: error.message,
+                    stack: error.stack
+                });
+            }
+        }
+
+        // Iniciar cámara con mejor manejo de errores
+        async function startCamera() {
+            try {
+                // Detener stream anterior si existe
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+
+                statusDiv.textContent = '📷 Solicitando acceso a la cámara...';
+                statusDiv.className = 'status loading';
+
+                // Intentar primero con la configuración básica
+                let constraints = {
+                    video: {
+                        facingMode: currentCamera
+                    },
+                    audio: false
+                };
+
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia(constraints);
+                } catch (firstError) {
+                    console.log('Primer intento falló, intentando sin facingMode...');
+                    // Si falla, intentar sin especificar facingMode
+                    constraints = {
+                        video: true,
+                        audio: false
+                    };
+                    stream = await navigator.mediaDevices.getUserMedia(constraints);
+                }
+
+                video.srcObject = stream;
+                
+                await video.play();
+                
+                // Esperar a que el video esté listo
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    switchBtn.disabled = false;
+                    statusDiv.textContent = '🎥 ¡Cámara activa! Detectando...';
+                    statusDiv.className = 'status ready';
+                    errorDetailsDiv.style.display = 'none';
+                    isDetecting = true;
+                    detectFrame();
+                };
+                
+            } catch (error) {
+                let errorMessage = 'Error accediendo a la cámara';
+                let errorDetails = {
+                    name: error.name,
+                    message: error.message,
+                    constraint: error.constraint
+                };
+                
+                if (error.name === 'NotAllowedError') {
+                    errorMessage = 'Permiso denegado para acceder a la cámara';
+                    errorDetails.solution = 'Ve a Configuración > Aplicaciones > Chrome > Permisos > Cámara y actívalo';
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage = 'No se encontró ninguna cámara';
+                    errorDetails.solution = 'Verifica que tu dispositivo tenga cámara';
+                } else if (error.name === 'NotReadableError') {
+                    errorMessage = 'La cámara está siendo usada por otra aplicación';
+                    errorDetails.solution = 'Cierra otras apps que puedan estar usando la cámara';
+                }
+                
+                showError(errorMessage, errorDetails);
+            }
+        }
+
+        // Detener cámara
+        function stopCamera() {
+            isDetecting = false;
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            video.srcObject = null;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            switchBtn.disabled = true;
+            statusDiv.textContent = '⏹️ Cámara detenida';
+            statusDiv.className = 'status ready';
+            personCountDiv.textContent = '0';
+            fpsDiv.textContent = '0';
+            confidenceDiv.textContent = '0%';
+        }
+
+        // Cambiar cámara
+        async function switchCamera() {
+            currentCamera = currentCamera === 'user' ? 'environment' : 'user';
+            await startCamera();
+        }
+
+        // Detectar objetos en cada frame
+        async function detectFrame() {
+            if (!isDetecting || !model) return;
+
+            try {
+                const predictions = await model.detect(video);
+                
+                // Limpiar canvas
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Filtrar solo personas
+                const persons = predictions.filter(pred => pred.class === 'person');
+                
+                // Dibujar detecciones
+                let totalConfidence = 0;
+                persons.forEach(person => {
+                    const [x, y, width, height] = person.bbox;
+                    const confidence = Math.round(person.score * 100);
+                    totalConfidence += confidence;
+                    
+                    // Dibujar rectángulo
+                    ctx.strokeStyle = '#00ff00';
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(x, y, width, height);
+                    
+                    // Dibujar fondo para el texto
+                    ctx.fillStyle = '#00ff00';
+                    ctx.fillRect(x, y - 30, 170, 30);
+                    
+                    // Dibujar texto
+                    ctx.fillStyle = '#000000';
+                    ctx.font = 'bold 18px Arial';
+                    ctx.fillText(`Persona ${confidence}%`, x + 5, y - 8);
+                });
+                
+                // Actualizar estadísticas
+                personCountDiv.textContent = persons.length;
+                
+                if (persons.length > 0) {
+                    const avgConfidence = Math.round(totalConfidence / persons.length);
+                    confidenceDiv.textContent = avgConfidence + '%';
+                } else {
+                    confidenceDiv.textContent = '0%';
+                }
+                
+                // Calcular FPS
+                frameCount++;
+                const currentTime = Date.now();
+                if (currentTime - lastTime >= 1000) {
+                    fpsDiv.textContent = frameCount;
+                    frameCount = 0;
+                    lastTime = currentTime;
+                }
+                
+            } catch (error) {
+                console.error('Error en detección:', error);
+            }
+            
+            // Continuar detección
+            requestAnimationFrame(detectFrame);
+        }
+
+        // Event Listeners
+        startBtn.addEventListener('click', startCamera);
+        stopBtn.addEventListener('click', stopCamera);
+        switchBtn.addEventListener('click', switchCamera);
+
+        // Cargar modelo al iniciar
+        loadModel();
+
+        // Detener cámara al salir
+        window.addEventListener('beforeunload', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+        });
+
+        // Logging para debug
+        console.log('Información del navegador:', {
+            userAgent: navigator.userAgent,
+            protocol: window.location.protocol,
+            hostname: window.location.hostname,
+            mediaDevices: !!navigator.mediaDevices,
+            getUserMedia: !!navigator.mediaDevices?.getUserMedia
+        });
+    </script>
+</body>
+</html>

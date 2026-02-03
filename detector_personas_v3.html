@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Permissions-Policy" content="camera=*">
+  <title>Detector de Personas y Cascos - MVP</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body{
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      min-height:100vh; padding:20px;
+    }
+    .container{
+      background:white; border-radius:20px; padding:30px;
+      box-shadow:0 20px 60px rgba(0,0,0,0.3);
+      max-width:95%; width:100%;
+    }
+    h1{ color:#333; text-align:center; margin-bottom:10px; font-size:28px; }
+    .subtitle{ text-align:center; color:#666; margin-bottom:25px; font-size:14px; }
+
+    .status{
+      background:#f0f0f0; padding:15px; border-radius:10px; margin-bottom:20px;
+      text-align:center; font-weight:bold; font-size:16px;
+    }
+    .status.loading{ background:#fff3cd; color:#856404; }
+    .status.ready{ background:#d4edda; color:#155724; }
+    .status.error{ background:#f8d7da; color:#721c24; }
+
+    .video-container{
+      position:relative; width:100%; max-width:800px; margin:0 auto 20px;
+      background:#000; border-radius:10px; overflow:hidden;
+    }
+    #video{ width:100%; height:auto; display:block; }
+    #canvas{ position:absolute; top:0; left:0; width:100%; height:100%; }
+
+    .controls{
+      display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-bottom:20px;
+    }
+    button{
+      background:#667eea; color:white; border:none; padding:15px 30px;
+      border-radius:10px; font-size:16px; font-weight:bold; cursor:pointer;
+      transition:all 0.3s;
+    }
+    button:hover{
+      background:#5568d3; transform:translateY(-2px);
+      box-shadow:0 5px 15px rgba(102,126,234,0.4);
+    }
+    button:disabled{ background:#ccc; cursor:not-allowed; transform:none; }
+
+    .stats{
+      display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+      gap:15px; margin-top:20px;
+    }
+    .stat-card{
+      background: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+      color:white; padding:20px; border-radius:10px; text-align:center;
+    }
+    .stat-number{ font-size:36px; font-weight:bold; margin-bottom:5px; }
+    .stat-label{ font-size:14px; opacity:0.9; }
+
+    .info{
+      background:#e7f3ff; border-left:4px solid #2196F3; padding:15px;
+      border-radius:5px; margin-top:20px; font-size:14px; line-height:1.6;
+    }
+    .error-details{
+      background:#fff3cd; border-left:4px solid #ffc107; padding:15px;
+      border-radius:5px; margin-top:20px; font-size:12px; line-height:1.6;
+      font-family:monospace; display:none;
+    }
+    @media (max-width:768px){
+      .container{ padding:20px; }
+      h1{ font-size:24px; }
+      button{ padding:12px 20px; font-size:14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎥 Detector de Personas y Cascos</h1>
+    <div class="subtitle">MVP - Detección en Tiempo Real (Personas local + Cascos vía Roboflow)</div>
+
+    <div id="status" class="status loading">
+      Cargando modelo de inteligencia artificial...
+    </div>
+
+    <div class="controls">
+      <button id="startBtn" disabled>▶️ Iniciar Cámara</button>
+      <button id="stopBtn" disabled>⏹️ Detener</button>
+      <button id="switchBtn" disabled>🔄 Cambiar Cámara</button>
+    </div>
+
+    <div class="video-container">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-number" id="personCount">0</div>
+        <div class="stat-label">Personas Detectadas</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="helmetCount">0</div>
+        <div class="stat-label">Cascos Detectados</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="fps">0</div>
+        <div class="stat-label">FPS</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="confidence">0%</div>
+        <div class="stat-label">Confianza (Personas)</div>
+      </div>
+    </div>
+
+    <div class="info">
+      <strong>📋 Instrucciones:</strong><br>
+      1. Haz clic en "Iniciar Cámara" para comenzar<br>
+      2. Permite el acceso a la cámara cuando lo solicite<br>
+      3. Cuadros <span style="color:#00aa00;font-weight:bold;">verdes</span> = personas (COCO-SSD, local)<br>
+      4. Cuadros <span style="color:#0077cc;font-weight:bold;">azules</span> = cascos (Roboflow, API)<br>
+      5. Usa "Cambiar Cámara" para alternar entre frontal/trasera
+      <br><br>
+      <strong>⚠️ Nota MVP:</strong> Para detectar cascos se llama a Roboflow cada ~1s (no en cada frame) para que sea estable.
+    </div>
+
+    <div id="errorDetails" class="error-details"></div>
+  </div>
+
+  <!-- TensorFlow.js y COCO-SSD -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3"></script>
+
+  <script>
+    let video = document.getElementById('video');
+    let canvas = document.getElementById('canvas');
+    let ctx = canvas.getContext('2d');
+
+    let model = null;
+    let stream = null;
+    let isDetecting = false;
+    let currentCamera = 'environment';
+    let lastTime = Date.now();
+    let frameCount = 0;
+
+    const statusDiv = document.getElementById('status');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const switchBtn = document.getElementById('switchBtn');
+
+    const personCountDiv = document.getElementById('personCount');
+    const helmetCountDiv = document.getElementById('helmetCount');
+    const fpsDiv = document.getElementById('fps');
+    const confidenceDiv = document.getElementById('confidence');
+    const errorDetailsDiv = document.getElementById('errorDetails');
+
+    // ==========================
+    //  CONFIG ROBOfLOW (EDITA AQUÍ)
+    // ==========================
+    // IMPORTANTE: NO uses una API key que ya publicaste. Genera una nueva en Roboflow.
+    // Reemplaza TU_API_KEY por tu key nueva.
+    const ROBOFLOW_DETECT_URL =
+      "https://detect.roboflow.com/hard-hat-mvp/1?api_key=TU_API_KEY";
+
+    // Si tu modelo usa otra clase (ej: "hardhat" en vez de "helmet"), ponla aquí.
+    // Puedes dejarlo en null para aceptar ambas ("hardhat"/"helmet") sin filtrar.
+    const HELMET_CLASS_NAMES = new Set(["hardhat", "helmet"]); // ajusta si tu modelo usa otro nombre
+
+    // Llamar a Roboflow cada X ms (para MVP estable)
+    const HELMET_INTERVAL_MS = 1000;
+
+    // Umbral de confianza (0.0 a 1.0)
+    const HELMET_MIN_SCORE = 0.35;
+
+    // ==========================
+    //  Estado Roboflow
+    // ==========================
+    let lastHelmetCheck = 0;
+    let lastHelmetPreds = []; // se dibujan en cada frame, pero se actualizan cada HELMET_INTERVAL_MS
+
+    // Función para mostrar errores detallados
+    function showError(message, details) {
+      console.error(message, details);
+      statusDiv.textContent = '❌ ' + message;
+      statusDiv.className = 'status error';
+
+      errorDetailsDiv.style.display = 'block';
+      errorDetailsDiv.innerHTML = '<strong>Detalles técnicos:</strong><br>' +
+        JSON.stringify(details, null, 2);
+    }
+
+    // Verificar soporte del navegador
+    function checkBrowserSupport() {
+      const errors = [];
+
+      if (!navigator.mediaDevices) {
+        errors.push('navigator.mediaDevices no está disponible');
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        errors.push('getUserMedia no está disponible');
+      }
+
+      if (window.location.protocol !== 'https:' &&
+          window.location.hostname !== 'localhost' &&
+          window.location.hostname !== '127.0.0.1') {
+        errors.push('Se requiere HTTPS para acceder a la cámara (excepto localhost)');
+      }
+
+      return errors;
+    }
+
+    // ==========================
+    //  Roboflow helpers
+    // ==========================
+    function dataURLToBlob(dataUrl) {
+      const arr = dataUrl.split(",");
+      const mime = arr[0].match(/:(.*?);/)[1];
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) u8arr[n] = bstr.charCodeAt(n);
+      return new Blob([u8arr], { type: mime });
+    }
+
+    async function detectHelmetFromFrame() {
+      // Captura frame del video en un canvas "offscreen"
+      const off = document.createElement("canvas");
+      off.width = video.videoWidth;
+      off.height = video.videoHeight;
+      const offCtx = off.getContext("2d");
+      offCtx.drawImage(video, 0, 0, off.width, off.height);
+
+      // Convertir a JPG (más liviano)
+      const dataUrl = off.toDataURL("image/jpeg", 0.7);
+      const blob = dataURLToBlob(dataUrl);
+
+      const formData = new FormData();
+      formData.append("file", blob, "frame.jpg");
+
+      const resp = await fetch(ROBOFLOW_DETECT_URL, {
+        method: "POST",
+        body: formData
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        throw new Error(`Roboflow ${resp.status}: ${text}`);
+      }
+
+      const json = await resp.json();
+
+      // Roboflow devuelve predictions con x,y,width,height (x,y = centro)
+      const preds = Array.isArray(json.predictions) ? json.predictions : [];
+
+      return preds.map(p => ({
+        class: p.class,
+        score: p.confidence ?? p.score ?? 0,
+        // convertir a bbox [x,y,w,h] con x,y esquina superior izquierda
+        bbox: [
+          (p.x - p.width / 2),
+          (p.y - p.height / 2),
+          p.width,
+          p.height
+        ]
+      }));
+    }
+
+    // Cargar el modelo COCO-SSD
+    async function loadModel() {
+      try {
+        const supportErrors = checkBrowserSupport();
+        if (supportErrors.length > 0) {
+          showError('Problemas de compatibilidad detectados', {
+            errors: supportErrors,
+            protocol: window.location.protocol,
+            hostname: window.location.hostname,
+            userAgent: navigator.userAgent
+          });
+          return;
+        }
+
+        statusDiv.textContent = '⏳ Cargando modelo de IA (Personas)...';
+        statusDiv.className = 'status loading';
+
+        model = await cocoSsd.load();
+
+        statusDiv.textContent = '✅ Modelo de personas cargado. Presiona "Iniciar Cámara"';
+        statusDiv.className = 'status ready';
+        startBtn.disabled = false;
+
+        console.log('Modelo COCO-SSD cargado correctamente');
+      } catch (error) {
+        showError('Error cargando el modelo', {
+          error: error.message,
+          stack: error.stack
+        });
+      }
+    }
+
+    // Iniciar cámara
+    async function startCamera() {
+      try {
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+        }
+
+        statusDiv.textContent = '📷 Solicitando acceso a la cámara...';
+        statusDiv.className = 'status loading';
+
+        let constraints = {
+          video: { facingMode: currentCamera },
+          audio: false
+        };
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (firstError) {
+          console.log('Primer intento falló, intentando sin facingMode...');
+          constraints = { video: true, audio: false };
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+        }
+
+        video.srcObject = stream;
+        await video.play();
+
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+
+          startBtn.disabled = true;
+          stopBtn.disabled = false;
+          switchBtn.disabled = false;
+
+          statusDiv.textContent = '🎥 ¡Cámara activa! Detectando personas y cascos...';
+          statusDiv.className = 'status ready';
+
+          errorDetailsDiv.style.display = 'none';
+
+          // reset stats
+          personCountDiv.textContent = '0';
+          helmetCountDiv.textContent = '0';
+          fpsDiv.textContent = '0';
+          confidenceDiv.textContent = '0%';
+
+          lastHelmetPreds = [];
+          lastHelmetCheck = 0;
+
+          isDetecting = true;
+          detectFrame();
+        };
+
+      } catch (error) {
+        let errorMessage = 'Error accediendo a la cámara';
+        let errorDetails = {
+          name: error.name,
+          message: error.message,
+          constraint: error.constraint
+        };
+
+        if (error.name === 'NotAllowedError') {
+          errorMessage = 'Permiso denegado para acceder a la cámara';
+          errorDetails.solution = 'Ve a Configuración > Permisos > Cámara y actívalo';
+        } else if (error.name === 'NotFoundError') {
+          errorMessage = 'No se encontró ninguna cámara';
+          errorDetails.solution = 'Verifica que tu dispositivo tenga cámara';
+        } else if (error.name === 'NotReadableError') {
+          errorMessage = 'La cámara está siendo usada por otra aplicación';
+          errorDetails.solution = 'Cierra otras apps que puedan estar usando la cámara';
+        }
+
+        showError(errorMessage, errorDetails);
+      }
+    }
+
+    // Detener cámara
+    function stopCamera() {
+      isDetecting = false;
+
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+
+      video.srcObject = null;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      switchBtn.disabled = true;
+
+      statusDiv.textContent = '⏹️ Cámara detenida';
+      statusDiv.className = 'status ready';
+
+      personCountDiv.textContent = '0';
+      helmetCountDiv.textContent = '0';
+      fpsDiv.textContent = '0';
+      confidenceDiv.textContent = '0%';
+
+      lastHelmetPreds = [];
+    }
+
+    // Cambiar cámara
+    async function switchCamera() {
+      currentCamera = currentCamera === 'user' ? 'environment' : 'user';
+      await startCamera();
+    }
+
+    // Dibujar caja y etiqueta
+    function drawBox({x, y, w, h, label, color}) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 4;
+      ctx.strokeRect(x, y, w, h);
+
+      // fondo texto
+      ctx.fillStyle = color;
+      const labelWidth = Math.min(320, Math.max(140, label.length * 10));
+      ctx.fillRect(x, y - 30, labelWidth, 30);
+
+      // texto
+      ctx.fillStyle = '#000000';
+      ctx.font = 'bold 18px Arial';
+      ctx.fillText(label, x + 5, y - 8);
+    }
+
+    // Detectar en cada frame
+    async function detectFrame() {
+      if (!isDetecting || !model) return;
+
+      try {
+        // 1) Personas (local)
+        const predictions = await model.detect(video);
+
+        // Limpiar canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Personas
+        const persons = predictions.filter(pred => pred.class === 'person');
+
+        let totalConfidence = 0;
+        persons.forEach(person => {
+          const [x, y, width, height] = person.bbox;
+          const confidence = Math.round(person.score * 100);
+          totalConfidence += confidence;
+
+          drawBox({
+            x, y, w: width, h: height,
+            label: `Persona ${confidence}%`,
+            color: '#00ff00'
+          });
+        });
+
+        personCountDiv.textContent = persons.length;
+
+        if (persons.length > 0) {
+          const avgConfidence = Math.round(totalConfidence / persons.length);
+          confidenceDiv.textContent = avgConfidence + '%';
+        } else {
+          confidenceDiv.textContent = '0%';
+        }
+
+        // 2) Cascos (Roboflow, por intervalos)
+        const now = Date.now();
+        if (now - lastHelmetCheck >= HELMET_INTERVAL_MS) {
+          lastHelmetCheck = now;
+
+          detectHelmetFromFrame()
+            .then(preds => {
+              // filtrar por clase y confianza
+              lastHelmetPreds = preds.filter(p => {
+                const okScore = (p.score ?? 0) >= HELMET_MIN_SCORE;
+                const cls = (p.class || "").toLowerCase();
+                const okClass = HELMET_CLASS_NAMES.size === 0
+                  ? true
+                  : HELMET_CLASS_NAMES.has(cls);
+
+                return okScore && okClass;
+              });
+            })
+            .catch(err => {
+              console.warn("Roboflow casco falló:", err.message);
+              lastHelmetPreds = [];
+            });
+        }
+
+        // Dibujar cascos con el último resultado disponible
+        let helmetCount = 0;
+        lastHelmetPreds.forEach(p => {
+          const [x, y, w, h] = p.bbox;
+          const confidence = Math.round((p.score ?? 0) * 100);
+          helmetCount++;
+
+          drawBox({
+            x, y, w, h,
+            label: `Casco ${confidence}%`,
+            color: '#00bfff'
+          });
+        });
+        helmetCountDiv.textContent = helmetCount;
+
+        // 3) FPS
+        frameCount++;
+        const currentTime = Date.now();
+        if (currentTime - lastTime >= 1000) {
+          fpsDiv.textContent = frameCount;
+          frameCount = 0;
+          lastTime = currentTime;
+        }
+
+      } catch (error) {
+        console.error('Error en detección:', error);
+      }
+
+      requestAnimationFrame(detectFrame);
+    }
+
+    // Event Listeners
+    startBtn.addEventListener('click', startCamera);
+    stopBtn.addEventListener('click', stopCamera);
+    switchBtn.addEventListener('click', switchCamera);
+
+    // Cargar modelo al iniciar
+    loadModel();
+
+    // Detener cámara al salir
+    window.addEventListener('beforeunload', () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    });
+
+    // Debug
+    console.log('Info navegador:', {
+      userAgent: navigator.userAgent,
+      protocol: window.location.protocol,
+      hostname: window.location.hostname,
+      mediaDevices: !!navigator.mediaDevices,
+      getUserMedia: !!navigator.mediaDevices?.getUserMedia
+    });
+  </script>
+</body>
+</html>
